@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- PRO CSS (Dark Mode & Metrics) ---
+# --- PRO CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -34,10 +34,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- LOAD BRAIN (Robust Path Check) ---
+# --- LOAD BRAIN ---
 @st.cache_resource
 def load_brain():
-    # Check all possible locations for the model
     paths = ["stock_predictor.h5", "backend/stock_predictor.h5"]
     for p in paths:
         if os.path.exists(p):
@@ -50,7 +49,7 @@ except Exception as e:
     st.error(f"Error loading AI: {e}")
     model = None
 
-# --- TECHNICAL ANALYSIS FUNCTIONS ---
+# --- TECHNICAL ANALYSIS ---
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -62,35 +61,37 @@ def calculate_rsi(data, window=14):
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/5305/5305052.png", width=70)
     st.title("QUANTUM DESK")
-    st.markdown("`v3.1 | CLOUD DEPLOYMENT`")
+    st.markdown("`v3.2 | PATCHED`")
     
     ticker = st.text_input("Ticker Symbol", value="AAPL").upper()
     run_btn = st.button("INITIATE ALGORITHM", type="primary")
     
     st.markdown("---")
-    st.markdown("**⚙️ PARAMETERS**")
-    lookback = st.slider("Lookback Window", 30, 90, 60)
-    
-    st.info("💡 **TIP:** Try 'BTC-USD', 'NVDA', or 'GC=F' (Gold).")
+    st.slider("Lookback Window", 30, 90, 60)
 
 # --- MAIN APP ---
 st.title(f"💹 Market Intelligence // {ticker}")
 
 if run_btn:
     if model is None:
-        st.error("⚠️ AI Model not found. Please ensure 'stock_predictor.h5' is in your GitHub repo.")
+        st.error("⚠️ AI Model not found. Check GitHub.")
     else:
         with st.spinner(f"📡 DOWNLOADING LIVE DATA FOR {ticker}..."):
             try:
-                # 1. Get Data (2 Years for moving averages)
+                # 1. Get Data
                 end = datetime.datetime.now()
                 start = end - datetime.timedelta(days=730)
-                data = yf.download(ticker, start=start, end=end)
+                data = yf.download(ticker, start=start, end=end, progress=False)
                 
+                # --- THE FIX: HANDLE MULTI-INDEX HEADERS ---
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(0)
+                # -------------------------------------------
+
                 if len(data) < 60:
                     st.error("Not enough data history for this asset.")
                 else:
-                    # 2. AI Prediction Logic
+                    # 2. AI Prediction
                     scaler = MinMaxScaler(feature_range=(0,1))
                     scaled_data = scaler.fit_transform(data[['Close']].values)
                     
@@ -98,13 +99,13 @@ if run_btn:
                     prediction = model.predict(x_input)
                     price = float(scaler.inverse_transform(prediction)[0][0])
                     
-                    # 3. Technical Calculations
+                    # 3. Technicals
                     data['SMA_50'] = data['Close'].rolling(window=50).mean()
                     data['RSI'] = calculate_rsi(data)
                     data = data.fillna(0)
                     
-                    # 4. Metrics
-                    current = data['Close'].iloc[-1]
+                    # 4. Metrics (Use .iloc[-1] and float() to force scalar)
+                    current = float(data['Close'].iloc[-1])
                     change = ((price - current)/current)*100
                     volume = int(data['Volume'].iloc[-1])
                     
@@ -123,7 +124,7 @@ if run_btn:
                     c3.metric("FORECAST", f"{change:+.2f}%")
                     c4.metric("24H VOLUME", f"{volume:,}")
                     
-                    # 6. AI Insight Card
+                    # 6. Insight Card
                     st.markdown(f"""
                     <div class="prediction-card" style="border-color: {trend_color};">
                         <h3 style="color: {trend_color}; margin:0;">{trend_msg}</h3>
@@ -134,35 +135,19 @@ if run_btn:
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # 7. PROFESSIONAL TABS
-                    tab1, tab2, tab3 = st.tabs(["📈 PRICE ACTION", "📊 TECHNICALS (RSI)", "💾 RAW DATA"])
+                    # 7. Charts
+                    tab1, tab2 = st.tabs(["📈 PRICE ACTION", "📊 TECHNICALS"])
                     
                     with tab1:
                         fig = go.Figure()
-                        # Candlesticks
                         fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Market'))
-                        # SMA Line
                         fig.add_trace(go.Scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA (50)', line=dict(color='#ff00ff', width=1)))
-                        # Prediction Dot
                         fig.add_trace(go.Scatter(x=[data.index[-1], "Forecast"], y=[current, price], mode='lines+markers', name='AI Vector', line=dict(color='yellow', dash='dot')))
-                        
                         fig.update_layout(height=500, xaxis_rangeslider_visible=False, template="plotly_dark")
                         st.plotly_chart(fig, use_container_width=True)
-                        
+
                     with tab2:
-                        fig_rsi = go.Figure()
-                        fig_rsi.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', line=dict(color='#00e676')))
-                        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                        fig_rsi.update_layout(height=400, template="plotly_dark", yaxis_range=[0, 100])
-                        st.plotly_chart(fig_rsi, use_container_width=True)
-                        
-                    with tab3:
-                        # Data Export Feature
-                        export_df = data[['Close', 'RSI', 'SMA_50']].tail(100)
-                        st.dataframe(export_df, use_container_width=True)
-                        csv = export_df.to_csv().encode('utf-8')
-                        st.download_button("📥 DOWNLOAD CSV REPORT", data=csv, file_name=f"{ticker}_analysis.csv", mime="text/csv")
+                        st.line_chart(data['RSI'])
 
             except Exception as e:
                 st.error(f"Analysis Failed: {e}")
