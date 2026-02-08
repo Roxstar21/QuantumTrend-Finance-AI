@@ -1,0 +1,10 @@
+# Ignore junk
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+venv/
+env/
+
+# WE NEED THE MODEL FOR CLOUD DEPLOYMENT
+# So do NOT ignore *.h5 files
