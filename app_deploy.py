@@ -8,22 +8,49 @@ import plotly.graph_objects as go
 import datetime
 import os
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="QuantumTrend Pro", page_icon="💹", layout="wide")
+# --- PAGE SETUP ---
+st.set_page_config(
+    page_title="QuantumTrend Pro",
+    page_icon="🦅",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- LOAD BRAIN (Cached for Speed) ---
+# --- PRO CSS (Dark Mode & Metrics) ---
+st.markdown("""
+<style>
+    .stApp { background-color: #0e1117; }
+    div[data-testid="stMetricValue"] {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 24px !important;
+    }
+    .prediction-card {
+        background-color: #1c2029;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid;
+        margin-bottom: 20px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- LOAD BRAIN (Robust Path Check) ---
 @st.cache_resource
 def load_brain():
-    # We look for the model in the 'backend' folder
-    model_path = os.path.join("backend", "stock_predictor.h5")
-    if not os.path.exists(model_path):
-        st.error(f"❌ MODEL NOT FOUND at {model_path}. Please check GitHub file structure.")
-        return None
-    return load_model(model_path)
+    # Check all possible locations for the model
+    paths = ["stock_predictor.h5", "backend/stock_predictor.h5"]
+    for p in paths:
+        if os.path.exists(p):
+            return load_model(p)
+    return None
 
-model = load_brain()
+try:
+    model = load_brain()
+except Exception as e:
+    st.error(f"Error loading AI: {e}")
+    model = None
 
-# --- HELPER FUNCTIONS ---
+# --- TECHNICAL ANALYSIS FUNCTIONS ---
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -35,66 +62,107 @@ def calculate_rsi(data, window=14):
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/5305/5305052.png", width=70)
     st.title("QUANTUM DESK")
-    st.markdown("`LIVE DEPLOYMENT`")
+    st.markdown("`v3.1 | CLOUD DEPLOYMENT`")
+    
     ticker = st.text_input("Ticker Symbol", value="AAPL").upper()
-    run_btn = st.button("RUN ANALYSIS", type="primary")
+    run_btn = st.button("INITIATE ALGORITHM", type="primary")
+    
+    st.markdown("---")
+    st.markdown("**⚙️ PARAMETERS**")
+    lookback = st.slider("Lookback Window", 30, 90, 60)
+    
+    st.info("💡 **TIP:** Try 'BTC-USD', 'NVDA', or 'GC=F' (Gold).")
 
-# --- MAIN LOGIC ---
+# --- MAIN APP ---
 st.title(f"💹 Market Intelligence // {ticker}")
 
 if run_btn:
-    if not model:
-        st.warning("⚠️ AI Model is missing. Cannot predict.")
+    if model is None:
+        st.error("⚠️ AI Model not found. Please ensure 'stock_predictor.h5' is in your GitHub repo.")
     else:
         with st.spinner(f"📡 DOWNLOADING LIVE DATA FOR {ticker}..."):
             try:
-                # 1. Get Data
-                end_date = datetime.datetime.now()
-                start_date = end_date - datetime.timedelta(days=730)
-                data = yf.download(ticker, start=start_date, end=end_date)
+                # 1. Get Data (2 Years for moving averages)
+                end = datetime.datetime.now()
+                start = end - datetime.timedelta(days=730)
+                data = yf.download(ticker, start=start, end=end)
                 
                 if len(data) < 60:
-                    st.error("Not enough data points for this asset.")
+                    st.error("Not enough data history for this asset.")
                 else:
-                    # 2. AI Prediction
-                    closing_prices = data[['Close']].values
-                    scaler = MinMaxScaler(feature_range=(0, 1))
-                    scaled_data = scaler.fit_transform(closing_prices)
+                    # 2. AI Prediction Logic
+                    scaler = MinMaxScaler(feature_range=(0,1))
+                    scaled_data = scaler.fit_transform(data[['Close']].values)
                     
-                    last_60_days = scaled_data[-60:]
-                    X_test = np.array([last_60_days])
-                    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+                    x_input = scaled_data[-60:].reshape(1, 60, 1)
+                    prediction = model.predict(x_input)
+                    price = float(scaler.inverse_transform(prediction)[0][0])
                     
-                    predicted_price = model.predict(X_test)
-                    predicted_price = scaler.inverse_transform(predicted_price)
-                    final_prediction = float(predicted_price[0][0])
-                    
-                    # 3. Technicals
+                    # 3. Technical Calculations
                     data['SMA_50'] = data['Close'].rolling(window=50).mean()
                     data['RSI'] = calculate_rsi(data)
                     data = data.fillna(0)
                     
-                    # 4. Display Metrics
-                    current_price = float(closing_prices[-1][0])
-                    change_percent = ((final_prediction - current_price) / current_price) * 100
+                    # 4. Metrics
+                    current = data['Close'].iloc[-1]
+                    change = ((price - current)/current)*100
+                    volume = int(data['Volume'].iloc[-1])
                     
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Current Price", f"${current_price:,.2f}")
-                    c2.metric("AI Target", f"${final_prediction:,.2f}")
-                    c3.metric("Forecast", f"{change_percent:+.2f}%")
+                    # Color Logic
+                    if change > 0:
+                        trend_color = "#00ff00"
+                        trend_msg = "🚀 BULLISH SIGNAL"
+                    else:
+                        trend_color = "#ff2b2b"
+                        trend_msg = "🔻 BEARISH SIGNAL"
+
+                    # 5. Display Metrics
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("ASSET PRICE", f"${current:,.2f}")
+                    c2.metric("AI TARGET", f"${price:,.2f}")
+                    c3.metric("FORECAST", f"{change:+.2f}%")
+                    c4.metric("24H VOLUME", f"{volume:,}")
                     
-                    # 5. Charts
-                    tab1, tab2 = st.tabs(["PRICE ACTION", "RSI"])
+                    # 6. AI Insight Card
+                    st.markdown(f"""
+                    <div class="prediction-card" style="border-color: {trend_color};">
+                        <h3 style="color: {trend_color}; margin:0;">{trend_msg}</h3>
+                        <p style="color: #ccc; margin-top: 5px;">
+                            Neural Network detects a move to <b>${price:.2f}</b>. 
+                            RSI is currently <b>{data['RSI'].iloc[-1]:.2f}</b>.
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 7. PROFESSIONAL TABS
+                    tab1, tab2, tab3 = st.tabs(["📈 PRICE ACTION", "📊 TECHNICALS (RSI)", "💾 RAW DATA"])
                     
                     with tab1:
                         fig = go.Figure()
+                        # Candlesticks
                         fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Market'))
-                        fig.add_trace(go.Scatter(x=[data.index[-1], "Forecast"], y=[current_price, final_prediction], mode='markers+lines', name='AI Vector', marker=dict(color='yellow', size=10)))
-                        fig.update_layout(height=500, xaxis_rangeslider_visible=False)
+                        # SMA Line
+                        fig.add_trace(go.Scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA (50)', line=dict(color='#ff00ff', width=1)))
+                        # Prediction Dot
+                        fig.add_trace(go.Scatter(x=[data.index[-1], "Forecast"], y=[current, price], mode='lines+markers', name='AI Vector', line=dict(color='yellow', dash='dot')))
+                        
+                        fig.update_layout(height=500, xaxis_rangeslider_visible=False, template="plotly_dark")
                         st.plotly_chart(fig, use_container_width=True)
                         
                     with tab2:
-                        st.line_chart(data['RSI'])
+                        fig_rsi = go.Figure()
+                        fig_rsi.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', line=dict(color='#00e676')))
+                        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+                        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+                        fig_rsi.update_layout(height=400, template="plotly_dark", yaxis_range=[0, 100])
+                        st.plotly_chart(fig_rsi, use_container_width=True)
+                        
+                    with tab3:
+                        # Data Export Feature
+                        export_df = data[['Close', 'RSI', 'SMA_50']].tail(100)
+                        st.dataframe(export_df, use_container_width=True)
+                        csv = export_df.to_csv().encode('utf-8')
+                        st.download_button("📥 DOWNLOAD CSV REPORT", data=csv, file_name=f"{ticker}_analysis.csv", mime="text/csv")
 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Analysis Failed: {e}")
